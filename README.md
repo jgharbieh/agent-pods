@@ -99,6 +99,20 @@ node cookies.mjs load --profile myapp --port 9223
 
 `pod.ps1 up wt2 -Cookies myapp` does the fallback injection automatically and records the state file path in `pod.json` so agent tooling can run the `state load` itself.
 
+## Humanized cursor — test UI flows with a *real* pointer
+
+Inside a pod we own the whole X display, so the agent can drive the **actual cursor** instead of injecting synthetic CDP events:
+
+```powershell
+.\pod.ps1 click wt2 -Selector "button.start-trial"   # cursor glides over, then clicks
+.\pod.ps1 move  wt2 -Selector "nav .dropdown"         # glide only — fires real :hover
+.\pod.ps1 click wt2 400 300                           # viewport coords (CSS px)
+```
+
+The pointer visibly travels across the screen in the noVNC viewer — you watch the agent *use* the page like a person. More than cosmetic: `Input.dispatchMouseEvent` (what most CDP automation uses) skips parts of the native input path — some `:hover` states, CSS transitions, and HTML5 drag never fire. xdotool moves the real X pointer, so Chromium sees genuine OS input. **Catches a class of UI bugs synthetic clicks can't reproduce.**
+
+This only works in pods (the host browser has no controllable virtual display). It's the reason to run UI-flow testing in a pod even when isolation isn't the goal.
+
 ## Worktree binding — zero per-session setup
 
 ```powershell

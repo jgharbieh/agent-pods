@@ -13,14 +13,21 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("up", "down", "ls", "url", "logs", "build", "help")]
+    [ValidateSet("up", "down", "ls", "url", "logs", "click", "move", "build", "help")]
     [string]$Cmd = "help",
 
     [Parameter(Position = 1)]
     [string]$Name,
 
+    [Parameter(Position = 2)]
+    [string]$Arg2,
+
+    [Parameter(Position = 3)]
+    [string]$Arg3,
+
     [string]$Cookies,
     [string]$Worktree,
+    [string]$Selector,
     [switch]$All,
     [switch]$Follow,
     [int]$Tail = 100
@@ -189,6 +196,20 @@ switch ($Cmd) {
         break
     }
 
+    { $_ -in "click", "move" } {
+        # pod.ps1 click [name] -Selector "button.submit"
+        # pod.ps1 click [name] <x> <y>     (viewport CSS px)
+        if (-not $Name) { throw "Usage: pod.ps1 click [name] -Selector <sel> | pod.ps1 click [name] <x> <y>" }
+        $pod = Get-Pods | Where-Object { $_.Name -eq $Name }
+        if (-not $pod) { throw "No pod named '$Name'." }
+        $cargs = @("$RepoRoot\cursor.mjs", $Cmd, "--pod", $Name, "--port", $pod.Cdp)
+        if ($Selector) { $cargs += @("--selector", $Selector) }
+        elseif ($Arg2 -and $Arg3) { $cargs += @("--x", $Arg2, "--y", $Arg3) }
+        else { throw "Provide -Selector <sel> or positional <x> <y>." }
+        node @cargs
+        break
+    }
+
     default {
         Write-Host @"
 agent-pods - containerized browsers for parallel Claude Code sessions
@@ -198,6 +219,9 @@ agent-pods - containerized browsers for parallel Claude Code sessions
   pod.ps1 ls                                         list pods + ports
   pod.ps1 url [name]                                 print watch URL
   pod.ps1 logs [name] -Tail 100 -Follow              container logs + restart count
+  pod.ps1 click [name] -Selector <sel>               glide real cursor + click
+  pod.ps1 click [name] <x> <y>                       click viewport coords
+  pod.ps1 move  [name] -Selector <sel>               glide cursor only (hover)
   pod.ps1 down [name] | down -All                    remove pod(s)
 
 Port 9222 is reserved for your real local browser. Pods get 9223+.

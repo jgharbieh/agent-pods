@@ -1,6 +1,7 @@
 FROM debian:bookworm-slim
 
 # Chromium + virtual display + VNC + noVNC web viewer + CDP bridge
+# + xdotool (real X cursor control for humanized UI testing)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     fonts-liberation \
@@ -11,12 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     novnc \
     websockify \
     socat \
+    xdotool \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY glide-click /usr/local/bin/glide-click
+RUN chmod +x /entrypoint.sh /usr/local/bin/glide-click
 
 # 9222 = CDP (bridged via socat), 7900 = noVNC web viewer
 EXPOSE 9222 7900

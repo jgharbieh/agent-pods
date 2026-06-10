@@ -101,5 +101,5 @@ c.close();
 const out = JSON.parse(result.value);
 if (out.error) { console.error(out.error); process.exit(1); }
 
-await exec("docker", ["exec", `agent-pod-${pod}`, "glide-click", String(out.x), String(out.y), "25", mode === "move" ? "move" : ""].filter(Boolean));
+await exec("docker", ["exec", `agent-pod-${pod}`, "glide-click", String(out.x), String(out.y), "60", mode === "move" ? "move" : ""].filter(Boolean));
 console.log(`${mode} -> screen ${out.x},${out.y}${selector ? ` (${selector})` : ""}`);

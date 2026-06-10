@@ -39,6 +39,28 @@ Zero interference. And because the viewer is just a URL, you can open it in **VS
 - Node 21+ (only for cookie export/load)
 - Any CDP client — [agent-browser](https://github.com/vercel-labs/agent-browser) recommended
 
+## Choosing the browser & compute
+
+The image bakes in **Chromium** by default. To use **Brave** instead (same
+engine, speaks CDP identically), build with the arg — or set `POD_BROWSER`
+once so every build/spawn uses it:
+
+```powershell
+$env:POD_BROWSER = "brave"     # or set it as a User env var to make it permanent
+.\pod.ps1 build                # rebuilds the image as Brave
+```
+
+Per-pod compute is overridable (defaults: 8 CPU / 8g RAM / 2g shm). Set
+per-call or machine-wide via env:
+
+```powershell
+.\pod.ps1 up wt2 -Cpus 4 -Memory 6g -Shm 2g
+# or: $env:POD_CPUS=6 ; $env:POD_MEMORY=6g ; $env:POD_SHM=2g
+```
+
+A bigger shm (shared memory) is the main lever for Chromium-family stability
+under heavy pages.
+
 ## Quick start
 
 ```powershell

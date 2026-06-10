@@ -39,11 +39,13 @@ session 3 (worktree wt3)   ->  pod "wt3"           CDP 9224   watch: localhost:7
 .\pod.ps1 down -All                   # remove all
 ```
 
-`pod up` prints the CDP port and watch URL. Point your tools at the port:
+`pod up` prints the CDP port and watch URL. Drive the pod with **explicit
+session + port flags on every command** (bare commands hit the default
+session, which may be bound to a different browser):
 
 ```bash
-agent-browser connect 9223
-agent-browser navigate https://example.com
+agent-browser --session wt2 --cdp 9223 open https://example.com
+agent-browser --session wt2 --cdp 9223 snapshot -i
 ```
 
 Open the watch URL to see it happen.
@@ -53,12 +55,22 @@ Open the watch URL to see it happen.
 ```powershell
 # Export from your real browser (CDP 9222), filtered by domain:
 node cookies.mjs export --profile myapp --domains example.com,api.example.com
+```
 
-# Load into a pod (or let `pod up -Cookies myapp` do it):
+Profiles are playwright storage-state JSON in `cookie-profiles/` — gitignored. Only the domains you name leave your browser, never the whole profile.
+
+Two ways into a pod:
+
+```bash
+# Preferred — into the agent-browser session's own context:
+agent-browser --session wt2 --cdp 9223 state load cookie-profiles/myapp.json
+
+# Fallback — into the pod's DEFAULT browser context (Playwright MCP etc.).
+# agent-browser uses an isolated context, so this alone won't reach it:
 node cookies.mjs load --profile myapp --port 9223
 ```
 
-Profiles land in `cookie-profiles/` — gitignored. Only the domains you name leave your browser, never the whole profile.
+`pod up -Cookies myapp` does the fallback injection and records the state file path in `pod.json` so agent skills run the `state load` themselves.
 
 ## Worktree binding
 

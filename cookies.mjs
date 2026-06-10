@@ -1,11 +1,19 @@
 #!/usr/bin/env node
-// cookies.mjs — export cookies from a running browser / load them into a pod.
-// Zero dependencies. Needs Node 21+ (global WebSocket).
+// cookies.mjs — slice cookies out of a running browser into an agent-browser
+// state file. Zero dependencies. Needs Node 21+ (global WebSocket).
 //
 //   node cookies.mjs export --profile weathercrm --domains weathercontracting.com[,other.com] [--from 9222]
 //   node cookies.mjs load   --profile weathercrm --port 9223
 //
 // Profiles are JSON files in ./cookie-profiles/ — gitignored, local only.
+// Export writes playwright storage-state format, so it plugs straight into:
+//
+//   agent-browser --session <pod> --cdp <port> state load cookie-profiles/<name>.json
+//
+// (preferred — lands cookies in the agent's own browser context). `load` is a
+// fallback that injects into the DEFAULT browser context via CDP, for clients
+// that attach there (e.g. Playwright MCP). agent-browser creates an isolated
+// context, so `load` alone won't reach it — use `state load` for agent-browser.
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -73,26 +81,25 @@ if (cmd === "export") {
   const { cookies } = await cdp.send("Storage.getCookies");
   cdp.close();
 
+  // playwright storage-state cookie shape (what agent-browser `state load` reads)
   const filtered = cookies
     .filter((c) => matchesDomain(c.domain.toLowerCase(), wanted))
-    .map((c) => {
-      const out = {
-        name: c.name,
-        value: c.value,
-        domain: c.domain,
-        path: c.path,
-        secure: c.secure,
-        httpOnly: c.httpOnly,
-      };
-      if (c.sameSite) out.sameSite = c.sameSite;
-      if (c.expires && c.expires > 0) out.expires = c.expires;
-      return out;
-    });
+    .map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path,
+      expires: c.expires && c.expires > 0 ? c.expires : -1,
+      httpOnly: c.httpOnly,
+      secure: c.secure,
+      sameSite: c.sameSite || "Lax",
+    }));
 
   await mkdir(profilesDir, { recursive: true });
   const file = join(profilesDir, `${profile}.json`);
-  await writeFile(file, JSON.stringify(filtered, null, 2));
+  await writeFile(file, JSON.stringify({ cookies: filtered, origins: [] }, null, 2));
   console.log(`Exported ${filtered.length} cookies (${wanted.join(", ")}) -> ${file}`);
+  console.log(`Use: agent-browser --session <pod> --cdp <port> state load ${file}`);
 } else if (cmd === "load") {
   const { profile, port } = args;
   if (!profile || !port) {
@@ -100,11 +107,19 @@ if (cmd === "export") {
     process.exit(1);
   }
   const file = join(profilesDir, `${profile}.json`);
-  const cookies = JSON.parse(await readFile(file, "utf8"));
+  // strip BOM — profiles hand-written on Windows often carry one
+  const raw = JSON.parse((await readFile(file, "utf8")).replace(/^﻿/, ""));
+  const list = Array.isArray(raw) ? raw : raw.cookies; // accept both formats
+  const cookies = list.map((c) => {
+    const out = { ...c };
+    if (out.expires === -1) delete out.expires; // CDP wants expires absent for session cookies
+    delete out.session;
+    return out;
+  });
   const cdp = await cdpConnect(port);
   await cdp.send("Storage.setCookies", { cookies });
   cdp.close();
-  console.log(`Loaded ${cookies.length} cookies from '${profile}' into pod on ${port}`);
+  console.log(`Loaded ${cookies.length} cookies from '${profile}' into default context on ${port}`);
 } else {
   console.error("Commands: export | load");
   process.exit(1);

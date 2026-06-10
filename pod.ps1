@@ -1,4 +1,4 @@
-# pod.ps1 — spawn/manage containerized agent browsers (agent pods)
+# pod.ps1 - spawn/manage containerized agent browsers (agent pods)
 #
 #   .\pod.ps1 up <name> [-Cookies <profile>] [-Worktree <path>]
 #   .\pod.ps1 down <name> | .\pod.ps1 down -All
@@ -7,6 +7,9 @@
 #
 # Each pod = one Chromium container: CDP on a unique localhost port (agent-browser,
 # Playwright MCP, watchconsole all attach to it), noVNC web viewer so you can watch.
+#
+# NOTE: keep this file ASCII-only. PowerShell 5.1 reads BOM-less files as ANSI and
+# multi-byte characters can corrupt string parsing.
 
 param(
     [Parameter(Position = 0)]
@@ -29,16 +32,21 @@ $WebBase = 7900   # pod N gets 7900+N
 $RepoRoot = $PSScriptRoot
 
 function Get-Pods {
-    $out = docker ps -a --filter "label=$Label" --format "{{.Names}}|{{.Label `"$Label.index`"}}|{{.Status}}"
+    # No quoted keys in the go-template: PowerShell 5.1 mangles embedded quotes
+    # when passing args to native exes. Index is derived from the published CDP port.
+    $out = docker ps -a --filter "label=$Label" --format "{{.Names}}|{{.Ports}}|{{.Status}}"
     $pods = @()
     foreach ($line in $out) {
         if (-not $line) { continue }
         $parts = $line -split "\|"
+        if ($parts[1] -notmatch "127\.0\.0\.1:(\d+)->9222/tcp") { continue }
+        $cdp = [int]$Matches[1]
+        $index = $cdp - $CdpBase
         $pods += [pscustomobject]@{
             Name   = $parts[0] -replace "^agent-pod-", ""
-            Index  = [int]$parts[1]
-            Cdp    = $CdpBase + [int]$parts[1]
-            Watch  = "http://localhost:$($WebBase + [int]$parts[1])/vnc.html?autoconnect=true&resize=scale"
+            Index  = $index
+            Cdp    = $cdp
+            Watch  = "http://localhost:$($WebBase + $index)/vnc.html?autoconnect=true" + "&resize=scale"
             Status = $parts[2]
         }
     }
@@ -65,14 +73,14 @@ switch ($Cmd) {
     }
 
     "up" {
-        if (-not $Name) { throw "Usage: pod.ps1 up <name> [-Cookies <profile>] [-Worktree <path>]" }
+        if (-not $Name) { throw "Usage: pod.ps1 up [name] -Cookies [profile] -Worktree [path]" }
         $existing = Get-Pods | Where-Object { $_.Name -eq $Name }
         if ($existing) { throw "Pod '$Name' already exists (status: $($existing.Status)). Use 'pod.ps1 down $Name' first." }
 
         # Image present?
         $img = docker images -q $Image
         if (-not $img) {
-            Write-Host "Image not built yet — building..."
+            Write-Host "Image not built yet - building..."
             docker build -t $Image $RepoRoot
         }
 
@@ -102,25 +110,36 @@ switch ($Cmd) {
             throw "Pod started but CDP never came up on $cdp. Logs above."
         }
 
-        # Inject cookies
+        # Cookies: inject into the default browser context (covers Playwright MCP
+        # etc). agent-browser uses its own isolated context, so the state file
+        # path also goes into pod.json for `agent-browser state load`.
+        $stateFile = $null
         if ($Cookies) {
+            $stateFile = Join-Path $RepoRoot "cookie-profiles\$Cookies.json"
+            if (-not (Test-Path $stateFile)) { throw "No cookie profile at $stateFile. Run cookies.mjs export first." }
             node "$RepoRoot\cookies.mjs" load --profile $Cookies --port $cdp
         }
 
-        $watch = "http://localhost:$web/vnc.html?autoconnect=true&resize=scale"
+        $watch = "http://localhost:$web/vnc.html?autoconnect=true" + "&resize=scale"
 
         # Bind to worktree
         if ($Worktree) {
             $claudeDir = Join-Path $Worktree ".claude"
             if (-not (Test-Path $claudeDir)) { New-Item -ItemType Directory -Path $claudeDir | Out-Null }
-            $podJson = @{ name = $Name; cdp = $cdp; watch = $watch } | ConvertTo-Json
+            $pod = @{ name = $Name; cdp = $cdp; watch = $watch }
+            if ($stateFile) { $pod.state = $stateFile }
+            $podJson = $pod | ConvertTo-Json
             [System.IO.File]::WriteAllText((Join-Path $claudeDir "pod.json"), $podJson)
             Write-Host "Bound to worktree: $(Join-Path $claudeDir 'pod.json')"
         }
 
         Write-Host ""
         Write-Host "Pod '$Name' is up." -ForegroundColor Green
-        Write-Host "  CDP:    127.0.0.1:$cdp   ->  agent-browser connect $cdp"
+        Write-Host "  CDP:    127.0.0.1:$cdp"
+        Write-Host "  Drive:  agent-browser --session $Name --cdp $cdp open <url>"
+        if ($stateFile) {
+            Write-Host "  Auth:   agent-browser --session $Name --cdp $cdp state load $stateFile"
+        }
         Write-Host "  Watch:  $watch"
         break
     }
@@ -134,7 +153,7 @@ switch ($Cmd) {
             docker rm -f "agent-pod-$Name" | Out-Null
             Write-Host "Pod '$Name' removed."
         } else {
-            throw "Usage: pod.ps1 down <name> | pod.ps1 down -All"
+            throw "Usage: pod.ps1 down [name] OR pod.ps1 down -All"
         }
         break
     }
@@ -147,7 +166,7 @@ switch ($Cmd) {
     }
 
     "url" {
-        if (-not $Name) { throw "Usage: pod.ps1 url <name>" }
+        if (-not $Name) { throw "Usage: pod.ps1 url [name]" }
         $pod = Get-Pods | Where-Object { $_.Name -eq $Name }
         if (-not $pod) { throw "No pod named '$Name'." }
         Write-Host $pod.Watch
@@ -156,13 +175,13 @@ switch ($Cmd) {
 
     default {
         Write-Host @"
-agent-pods — containerized browsers for parallel Claude Code sessions
+agent-pods - containerized browsers for parallel Claude Code sessions
 
   pod.ps1 build                                      build the image
-  pod.ps1 up <name> [-Cookies <p>] [-Worktree <dir>] spawn pod (CDP + watch URL)
+  pod.ps1 up [name] -Cookies [p] -Worktree [dir]     spawn pod (CDP + watch URL)
   pod.ps1 ls                                         list pods + ports
-  pod.ps1 url <name>                                 print watch URL
-  pod.ps1 down <name> | down -All                    remove pod(s)
+  pod.ps1 url [name]                                 print watch URL
+  pod.ps1 down [name] | down -All                    remove pod(s)
 
 Port 9222 is reserved for your real local browser. Pods get 9223+.
 "@

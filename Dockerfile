@@ -1,9 +1,13 @@
 FROM debian:bookworm-slim
 
-# Chromium + virtual display + VNC + noVNC web viewer + CDP bridge
+# Which browser to bake in: "chromium" (default) or "brave".
+# Both are Chromium-family and speak CDP identically.
+#   docker build --build-arg BROWSER=brave -t agent-pod:latest .
+ARG BROWSER=chromium
+
+# Virtual display + VNC + noVNC web viewer + CDP bridge
 # + xdotool (real X cursor control for humanized UI testing)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
     fonts-liberation \
     fonts-noto-color-emoji \
     xvfb \
@@ -14,7 +18,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     socat \
     xdotool \
     curl \
+    gnupg \
     ca-certificates \
+    && if [ "$BROWSER" = "brave" ]; then \
+         curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg \
+           https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg && \
+         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" \
+           > /etc/apt/sources.list.d/brave-browser-release.list && \
+         apt-get update && apt-get install -y --no-install-recommends brave-browser && \
+         echo "brave-browser" > /etc/pod-browser ; \
+       else \
+         apt-get install -y --no-install-recommends chromium && \
+         echo "chromium" > /etc/pod-browser ; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh

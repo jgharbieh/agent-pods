@@ -28,6 +28,9 @@ param(
     [string]$Cookies,
     [string]$Worktree,
     [string]$Selector,
+    [string]$Cpus,
+    [string]$Memory,
+    [string]$Shm,
     [switch]$All,
     [switch]$Follow,
     [int]$Tail = 100
@@ -39,6 +42,16 @@ $Label = "agent-pod"
 $CdpBase = 9222   # pod N gets 9222+N (pod 1 -> 9223); 9222 stays your real Brave
 $WebBase = 7900   # pod N gets 7900+N
 $RepoRoot = $PSScriptRoot
+
+# Compute caps (overridable per-call, or set machine-wide via env vars).
+function FirstSet($a, $b) { if ($a) { $a } else { $b } }
+$Cpus   = FirstSet $Cpus   (FirstSet $env:POD_CPUS   "8")
+$Memory = FirstSet $Memory (FirstSet $env:POD_MEMORY "8g")
+$Shm    = FirstSet $Shm    (FirstSet $env:POD_SHM    "2g")
+
+# Browser baked into the image: chromium (default) or brave. Set POD_BROWSER=brave
+# (User env var) to make every build/spawn use Brave on this machine.
+$Browser = FirstSet $env:POD_BROWSER "chromium"
 
 function Get-Pods {
     # No quoted keys in the go-template: PowerShell 5.1 mangles embedded quotes
@@ -77,7 +90,8 @@ function Wait-Cdp([int]$Port) {
 switch ($Cmd) {
 
     "build" {
-        docker build -t $Image $RepoRoot
+        Write-Host "Building $Image with browser=$Browser ..."
+        docker build --build-arg "BROWSER=$Browser" -t $Image $RepoRoot
         break
     }
 
@@ -89,8 +103,8 @@ switch ($Cmd) {
         # Image present?
         $img = docker images -q $Image
         if (-not $img) {
-            Write-Host "Image not built yet - building..."
-            docker build -t $Image $RepoRoot
+            Write-Host "Image not built yet - building (browser=$Browser)..."
+            docker build --build-arg "BROWSER=$Browser" -t $Image $RepoRoot
         }
 
         # First free index 1..50
@@ -107,7 +121,9 @@ switch ($Cmd) {
             --name "agent-pod-$Name" `
             --label "$Label=true" `
             --label "$Label.index=$index" `
-            --shm-size=1g `
+            --cpus $Cpus `
+            --memory $Memory `
+            --shm-size $Shm `
             --restart unless-stopped `
             --log-opt max-size=10m `
             --log-opt max-file=3 `
@@ -145,7 +161,7 @@ switch ($Cmd) {
         }
 
         Write-Host ""
-        Write-Host "Pod '$Name' is up." -ForegroundColor Green
+        Write-Host "Pod '$Name' is up ($Browser, ${Cpus} cpu / ${Memory} ram / ${Shm} shm)." -ForegroundColor Green
         Write-Host "  CDP:    127.0.0.1:$cdp"
         Write-Host "  Drive:  agent-browser --session $Name --cdp $cdp open <url>"
         if ($stateFile) {

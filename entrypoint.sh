@@ -14,9 +14,18 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 
-# Headed Chromium with CDP on an internal port.
-# Chromium only binds CDP to 127.0.0.1, so socat bridges it to 0.0.0.0:9222 below.
-chromium \
+# Headed Chromium-family browser with CDP on an internal port. The browser was
+# chosen at build time (chromium or brave) and recorded in /etc/pod-browser.
+# It binds CDP to 127.0.0.1 only, so socat bridges it to 0.0.0.0:9222 below.
+BROWSER_BIN="$(cat /etc/pod-browser 2>/dev/null || echo chromium)"
+
+# Brave-specific: don't nag about updates / default-browser inside a throwaway pod.
+EXTRA=""
+if [ "$BROWSER_BIN" = "brave-browser" ]; then
+  EXTRA="--disable-brave-update"
+fi
+
+"$BROWSER_BIN" \
   --no-sandbox \
   --disable-dev-shm-usage \
   --remote-debugging-port=9221 \
@@ -26,6 +35,7 @@ chromium \
   --disable-session-crashed-bubble \
   --window-position=0,0 \
   --window-size="${SCREEN_W},${SCREEN_H}" \
+  $EXTRA \
   "about:blank" &
 
 # CDP bridge: container-external 9222 -> chromium-internal 9221

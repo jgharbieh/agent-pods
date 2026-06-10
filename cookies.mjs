@@ -71,19 +71,20 @@ const cmd = args._[0];
 
 if (cmd === "export") {
   const { profile, domains } = args;
+  const all = args.all !== undefined;
   const from = args.from || "9222";
-  if (!profile || !domains) {
-    console.error("Usage: cookies.mjs export --profile <name> --domains <d1,d2> [--from 9222]");
+  if (!profile || (!domains && !all)) {
+    console.error("Usage: cookies.mjs export --profile <name> (--domains <d1,d2> | --all) [--from 9222]");
     process.exit(1);
   }
-  const wanted = domains.split(",").map((s) => s.trim().toLowerCase());
+  const wanted = all ? null : domains.split(",").map((s) => s.trim().toLowerCase());
   const cdp = await cdpConnect(from);
   const { cookies } = await cdp.send("Storage.getCookies");
   cdp.close();
 
   // playwright storage-state cookie shape (what agent-browser `state load` reads)
   const filtered = cookies
-    .filter((c) => matchesDomain(c.domain.toLowerCase(), wanted))
+    .filter((c) => all || matchesDomain(c.domain.toLowerCase(), wanted))
     .map((c) => ({
       name: c.name,
       value: c.value,
@@ -98,7 +99,7 @@ if (cmd === "export") {
   await mkdir(profilesDir, { recursive: true });
   const file = join(profilesDir, `${profile}.json`);
   await writeFile(file, JSON.stringify({ cookies: filtered, origins: [] }, null, 2));
-  console.log(`Exported ${filtered.length} cookies (${wanted.join(", ")}) -> ${file}`);
+  console.log(`Exported ${filtered.length} cookies (${all ? "ALL domains" : wanted.join(", ")}) -> ${file}`);
   console.log(`Use: agent-browser --session <pod> --cdp <port> state load ${file}`);
 } else if (cmd === "load") {
   const { profile, port } = args;

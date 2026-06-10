@@ -13,7 +13,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("up", "down", "ls", "url", "build", "help")]
+    [ValidateSet("up", "down", "ls", "url", "logs", "build", "help")]
     [string]$Cmd = "help",
 
     [Parameter(Position = 1)]
@@ -21,7 +21,9 @@ param(
 
     [string]$Cookies,
     [string]$Worktree,
-    [switch]$All
+    [switch]$All,
+    [switch]$Follow,
+    [int]$Tail = 100
 )
 
 $ErrorActionPreference = "Stop"
@@ -100,6 +102,8 @@ switch ($Cmd) {
             --label "$Label.index=$index" `
             --shm-size=1g `
             --restart unless-stopped `
+            --log-opt max-size=10m `
+            --log-opt max-file=3 `
             -p "127.0.0.1:${cdp}:9222" `
             -p "127.0.0.1:${web}:7900" `
             $Image | Out-Null
@@ -173,6 +177,18 @@ switch ($Cmd) {
         break
     }
 
+    "logs" {
+        if (-not $Name) { throw "Usage: pod.ps1 logs [name] -Tail 100 -Follow" }
+        # Container stdout: Xvfb + Chromium + socat + x11vnc + websockify.
+        # Crash forensics: last lines before exit survive here (json-file,
+        # rotated 3x10MB). Restart count = how many times it has died.
+        $restarts = docker inspect --format "{{.RestartCount}} restarts, status={{.State.Status}}, started={{.State.StartedAt}}" "agent-pod-$Name"
+        Write-Host $restarts
+        if ($Follow) { docker logs "agent-pod-$Name" --tail $Tail --timestamps --follow }
+        else { docker logs "agent-pod-$Name" --tail $Tail --timestamps }
+        break
+    }
+
     default {
         Write-Host @"
 agent-pods - containerized browsers for parallel Claude Code sessions
@@ -181,6 +197,7 @@ agent-pods - containerized browsers for parallel Claude Code sessions
   pod.ps1 up [name] -Cookies [p] -Worktree [dir]     spawn pod (CDP + watch URL)
   pod.ps1 ls                                         list pods + ports
   pod.ps1 url [name]                                 print watch URL
+  pod.ps1 logs [name] -Tail 100 -Follow              container logs + restart count
   pod.ps1 down [name] | down -All                    remove pod(s)
 
 Port 9222 is reserved for your real local browser. Pods get 9223+.

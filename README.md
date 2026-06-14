@@ -151,14 +151,16 @@ Convention: agent skills check the workspace root for `.claude/pod.json` first. 
 
 ## Logging & crash forensics
 
-Container stdout (Xvfb, Chromium, socat, x11vnc, websockify) goes to Docker's json-file driver, rotated at 3×10 MB — the last lines before a crash survive:
+Container stdout (Xvfb, Chromium, socat, x11vnc, websockify) goes to Docker's json-file driver, rotated at 5×50 MB for the live view:
 
 ```powershell
 .\pod.ps1 logs wt2 -Tail 200        # recent logs + restart count
 .\pod.ps1 logs wt2 -Follow          # live tail
 ```
 
-The first line tells you the health story: `0 restarts, status=running, started=...`. Pods run with `--restart unless-stopped`, so a crashed browser comes back on its own — the restart count tells you it happened. For in-page logs (console, network), point your usual CDP watcher at the pod's port.
+**Durable archive (extended runs):** on `up`, a detached `docker logs --follow` streams the whole run to `D:\dev\sandbox\<pod-name>\<name>-<timestamp>.log` — survives json-file rotation *and* teardown. On `down`, a final snapshot of the json-file ring is also dumped there. So nothing is lost when you kill a long-lived pod. Override the root with the `POD_LOG_ROOT` env var.
+
+The first line of `logs` tells you the health story: `0 restarts, status=running, started=...`. Pods run with `--restart unless-stopped`, so a crashed browser comes back on its own — the restart count tells you it happened. For in-page logs (console, network), point your usual CDP watcher at the pod's port.
 
 ## How the container works
 

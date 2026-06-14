@@ -53,6 +53,34 @@ $Shm    = FirstSet $Shm    (FirstSet $env:POD_SHM    "2g")
 # (User env var) to make every build/spawn use Brave on this machine.
 $Browser = FirstSet $env:POD_BROWSER "chromium"
 
+# Durable container-log archive. One folder per pod under here; live-captured for
+# the whole run so logs survive both json-file rotation AND teardown. Override with
+# POD_LOG_ROOT. Folder name = pod name (e.g. weathercrm-wt1).
+$LogRoot = FirstSet $env:POD_LOG_ROOT "D:\dev\sandbox"
+
+function Start-PodLogCapture([string]$PodName) {
+    $dir = Join-Path $LogRoot $PodName
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $file = Join-Path $dir "$PodName-$stamp.log"
+    # Detached follower: merges stdout+stderr, appends for the life of the container.
+    # docker logs -f exits on its own when the container is removed.
+    Start-Process -FilePath "cmd.exe" -WindowStyle Hidden `
+        -ArgumentList "/c docker logs -f --timestamps agent-pod-$PodName >> ""$file"" 2>&1" | Out-Null
+    return $file
+}
+
+function Save-PodLogSnapshot([string]$PodName) {
+    # Belt-and-suspenders at teardown: dump the full json-file ring before rm,
+    # in case the live follower lagged or was never started (pre-existing pod).
+    $dir = Join-Path $LogRoot $PodName
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $file = Join-Path $dir "$PodName-final-$stamp.log"
+    Start-Process -FilePath "cmd.exe" -WindowStyle Hidden -Wait `
+        -ArgumentList "/c docker logs --timestamps agent-pod-$PodName >> ""$file"" 2>&1" | Out-Null
+}
+
 function Get-Pods {
     # No quoted keys in the go-template: PowerShell 5.1 mangles embedded quotes
     # when passing args to native exes. Index is derived from the published CDP port.
@@ -125,8 +153,8 @@ switch ($Cmd) {
             --memory $Memory `
             --shm-size $Shm `
             --restart unless-stopped `
-            --log-opt max-size=10m `
-            --log-opt max-file=3 `
+            --log-opt max-size=50m `
+            --log-opt max-file=5 `
             -p "127.0.0.1:${cdp}:9222" `
             -p "127.0.0.1:${web}:7900" `
             $Image | Out-Null
@@ -136,6 +164,9 @@ switch ($Cmd) {
             docker logs "agent-pod-$Name" --tail 30
             throw "Pod started but CDP never came up on $cdp. Logs above."
         }
+
+        # Start durable live log capture for the whole run.
+        $logFile = Start-PodLogCapture $Name
 
         # Cookies: inject into the default browser context (covers Playwright MCP
         # etc). agent-browser uses its own isolated context, so the state file
@@ -168,17 +199,23 @@ switch ($Cmd) {
             Write-Host "  Auth:   agent-browser --session $Name --cdp $cdp state load $stateFile"
         }
         Write-Host "  Watch:  $watch"
+        Write-Host "  Logs:   $logFile (live capture)"
         break
     }
 
     "down" {
         if ($All) {
-            $names = Get-Pods | ForEach-Object { "agent-pod-$($_.Name)" }
-            if ($names) { docker rm -f $names | Out-Null; Write-Host "All pods removed." }
+            $pods = Get-Pods
+            if ($pods) {
+                foreach ($p in $pods) { Save-PodLogSnapshot $p.Name }
+                docker rm -f ($pods | ForEach-Object { "agent-pod-$($_.Name)" }) | Out-Null
+                Write-Host "All pods removed (logs archived under $LogRoot)."
+            }
             else { Write-Host "No pods." }
         } elseif ($Name) {
+            Save-PodLogSnapshot $Name
             docker rm -f "agent-pod-$Name" | Out-Null
-            Write-Host "Pod '$Name' removed."
+            Write-Host "Pod '$Name' removed (logs archived under $LogRoot\$Name)."
         } else {
             throw "Usage: pod.ps1 down [name] OR pod.ps1 down -All"
         }
@@ -203,8 +240,9 @@ switch ($Cmd) {
     "logs" {
         if (-not $Name) { throw "Usage: pod.ps1 logs [name] -Tail 100 -Follow" }
         # Container stdout: Xvfb + Chromium + socat + x11vnc + websockify.
-        # Crash forensics: last lines before exit survive here (json-file,
-        # rotated 3x10MB). Restart count = how many times it has died.
+        # Live view here (json-file, rotated 5x50MB). For the durable full-run
+        # archive (survives rotation + teardown) see $LogRoot\<name>\.
+        # Restart count = how many times it has died.
         $restarts = docker inspect --format "{{.RestartCount}} restarts, status={{.State.Status}}, started={{.State.StartedAt}}" "agent-pod-$Name"
         Write-Host $restarts
         if ($Follow) { docker logs "agent-pod-$Name" --tail $Tail --timestamps --follow }

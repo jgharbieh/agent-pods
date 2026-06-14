@@ -62,7 +62,7 @@ function Start-PodLogCapture([string]$PodName) {
     $dir = Join-Path $LogRoot $PodName
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $file = Join-Path $dir "$PodName-$stamp.log"
+    $file = Join-Path $dir "docker-$stamp.log"
     # Detached follower: merges stdout+stderr, appends for the life of the container.
     # docker logs -f exits on its own when the container is removed.
     Start-Process -FilePath "cmd.exe" -WindowStyle Hidden `
@@ -76,7 +76,7 @@ function Save-PodLogSnapshot([string]$PodName) {
     $dir = Join-Path $LogRoot $PodName
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $file = Join-Path $dir "$PodName-final-$stamp.log"
+    $file = Join-Path $dir "docker-final-$stamp.log"
     Start-Process -FilePath "cmd.exe" -WindowStyle Hidden -Wait `
         -ArgumentList "/c docker logs --timestamps agent-pod-$PodName >> ""$file"" 2>&1" | Out-Null
 }

@@ -25,8 +25,12 @@ const profilesDir = join(here, "cookie-profiles");
 function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith("--")) args[argv[i].slice(2)] = argv[++i];
-    else args._.push(argv[i]);
+    const cur = argv[i];
+    if (!cur.startsWith("--")) { args._.push(cur); continue; }
+    const key = cur.slice(2);
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith("--")) { args[key] = true; }  // boolean flag (e.g. --all)
+    else { args[key] = next; i++; }                                          // valued flag
   }
   return args;
 }

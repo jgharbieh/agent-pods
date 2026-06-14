@@ -25,9 +25,11 @@ if [ "$BROWSER_BIN" = "brave-browser" ]; then
   EXTRA="--disable-brave-update"
 fi
 
+# NOTE: no --disable-dev-shm-usage — the container gets a real --shm-size (POD_SHM,
+# default 2g) so Chromium SHOULD use /dev/shm. Disabling it would neuter that knob and
+# hurt stability on heavy pages (the whole reason shm is configurable).
 "$BROWSER_BIN" \
   --no-sandbox \
-  --disable-dev-shm-usage \
   --remote-debugging-port=9221 \
   --user-data-dir=/data/profile \
   --no-first-run \

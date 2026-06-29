@@ -31,13 +31,17 @@ param(
     [string]$Cpus,
     [string]$Memory,
     [string]$Shm,
+    [string]$ImageOverride,
     [switch]$All,
     [switch]$Follow,
     [int]$Tail = 100
 )
 
 $ErrorActionPreference = "Stop"
-$Image = "agent-pod:latest"
+# Default image is the browser-only pod. claude-pod.ps1 passes -ImageOverride
+# agent-pod-claude:latest to reuse all the up/cookie/log/profile logic here with
+# the in-container-Claude image instead.
+$Image = if ($ImageOverride) { $ImageOverride } else { "agent-pod:latest" }
 $Label = "agent-pod"
 $CdpBase = 9222   # pod N gets 9222+N (pod 1 -> 9223); 9222 stays your real Brave
 $WebBase = 7900   # pod N gets 7900+N
@@ -52,6 +56,11 @@ $Shm    = FirstSet $Shm    (FirstSet $env:POD_SHM    "2g")
 # Browser baked into the image: chromium (default) or brave. Set POD_BROWSER=brave
 # (User env var) to make every build/spawn use Brave on this machine.
 $Browser = FirstSet $env:POD_BROWSER "chromium"
+
+# Durable browser profiles. One folder per pod under here; mounted into the
+# container at /data/profile so cookies, localStorage, and login state survive
+# container removal/recreation. Override with POD_PROFILE_ROOT.
+$ProfileRoot = FirstSet $env:POD_PROFILE_ROOT "D:\dev\sandbox\agent-pods\profiles"
 
 # Durable container-log archive. One folder per pod under here; live-captured for
 # the whole run so logs survive both json-file rotation AND teardown. Override with
@@ -144,6 +153,8 @@ switch ($Cmd) {
         if ($index -eq 0) { throw "No free pod slot (1..50 all used)." }
         $cdp = $CdpBase + $index
         $web = $WebBase + $index
+        $profileDir = Join-Path $ProfileRoot $Name
+        New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
 
         docker run -d `
             --name "agent-pod-$Name" `
@@ -155,6 +166,7 @@ switch ($Cmd) {
             --restart unless-stopped `
             --log-opt max-size=50m `
             --log-opt max-file=5 `
+            -v "${profileDir}:/data/profile" `
             -p "127.0.0.1:${cdp}:9222" `
             -p "127.0.0.1:${web}:7900" `
             $Image | Out-Null
@@ -184,7 +196,7 @@ switch ($Cmd) {
         if ($Worktree) {
             $claudeDir = Join-Path $Worktree ".claude"
             if (-not (Test-Path $claudeDir)) { New-Item -ItemType Directory -Path $claudeDir | Out-Null }
-            $pod = @{ name = $Name; cdp = $cdp; watch = $watch }
+            $pod = @{ name = $Name; cdp = $cdp; watch = $watch; profile = $profileDir }
             if ($stateFile) { $pod.state = $stateFile }
             $podJson = $pod | ConvertTo-Json
             [System.IO.File]::WriteAllText((Join-Path $claudeDir "pod.json"), $podJson)
@@ -195,6 +207,7 @@ switch ($Cmd) {
         Write-Host "Pod '$Name' is up ($Browser, ${Cpus} cpu / ${Memory} ram / ${Shm} shm)." -ForegroundColor Green
         Write-Host "  CDP:    127.0.0.1:$cdp"
         Write-Host "  Drive:  agent-browser --session $Name --cdp $cdp open <url>"
+        Write-Host "  Profile: $profileDir"
         if ($stateFile) {
             Write-Host "  Auth:   agent-browser --session $Name --cdp $cdp state load $stateFile"
         }

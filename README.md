@@ -168,6 +168,29 @@ The first line of `logs` tells you the health story: `0 restarts, status=running
 
 **No API keys. No LLM in the container. It's just a browser.** The agent stays on your host.
 
+## Variant: Claude *inside* the pod (`claude-pod.ps1`)
+
+The base pod keeps the agent on your host. The **claude-pod** variant flips that:
+it bakes a full Claude Code runtime *into* the image so the agent runs **inside
+the container** and drives the local browser. Why: isolation. With the agent on
+the host, a prompt-injected shell command (from a malicious page) runs on your
+host; inside the container its blast radius is the disposable pod, so
+`--dangerously-skip-permissions` is safe to run.
+
+```powershell
+.\claude-pod.ps1 build                   # agent-pod-claude:latest (base + Node + Claude Code + agent-browser + nodriver)
+.\claude-pod.ps1 up <name>               # spawn (reuses pod.ps1: ports, profile, cookies, logs)
+.\claude-pod.ps1 login <name>            # ONE-TIME interactive OAuth -> your Claude quota (NOT an API key); persists on the mount
+.\claude-pod.ps1 run <name> "<mission>"  # dispatch a mission headless -> JSON result
+.\claude-pod.ps1 shell <name>            # interactive shell in the pod (agent user)
+```
+
+- The host only builds / spawns / logs-in-once / dispatches. All browser work is sandboxed.
+- Runs as non-root `agent` (Claude Code refuses `--dangerously-skip-permissions` as root).
+- Credentials persist at `/data/profile/.claude` (`CLAUDE_CONFIG_DIR`) on the profile mount: log in once, survives teardown.
+- The agent's standing manual is baked in at `/work/CLAUDE.md` (source: `claude-pod.CLAUDE.md`); each `run` adds the mission on top.
+- Driving: `agent-browser --cdp 9221` (easy default) or `nodriver` (raw-CDP, higher stealth) for high-detection targets.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
